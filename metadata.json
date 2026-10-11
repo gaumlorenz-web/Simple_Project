@@ -1,0 +1,6 @@
+{
+  "name": "ConfettiPop - Whimsical Birthday Greetings & 3D Cake",
+  "description": "Send whimsical, vibrant birthday greetings featuring animated balloons, an interactive 3D birthday cake with blowable candles, customizable templates, Happy Birthday music box tunes, and instant social share links.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
