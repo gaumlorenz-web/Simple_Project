@@ -21,6 +21,7 @@ interface FloatingWish {
   x: number;
   y: number;
   text: string;
+  isFading?: boolean;
 }
 
 const BALLOON_PALETTES: Record<BalloonTheme, { main: string; shine: string }[]> = {
@@ -106,7 +107,7 @@ export const BalloonEffect: React.FC<BalloonEffectProps> = ({
   interactive = true,
   activeRelease = null
 }) => {
-  // Initially empty: on the landing page, NO balloons are floating around!
+  // Empty initially on landing page
   const [balloons, setBalloons] = useState<BalloonItem[]>([]);
   const [isFadingOut, setIsFadingOut] = useState(false);
   const [floatingWishes, setFloatingWishes] = useState<FloatingWish[]>([]);
@@ -116,35 +117,48 @@ export const BalloonEffect: React.FC<BalloonEffectProps> = ({
   const cleanupTimeoutRef = useRef<number | null>(null);
   const fadeTimeoutRef = useRef<number | null>(null);
 
-  // Pop balloon handler
+  // Pop balloon handler: displays message for a generous 5.0 seconds so Ivy can read it!
   const handlePop = (id: string, e: React.MouseEvent<HTMLDivElement>) => {
     if (!interactive) return;
     e.stopPropagation();
 
     const rect = e.currentTarget.getBoundingClientRect();
-    const x = rect.left + rect.width / 2;
-    const y = rect.top + rect.height / 2;
+    const rawX = rect.left + rect.width / 2;
+    const rawY = rect.top + rect.height / 2;
+
+    // Clamp coordinates so toast is never clipped off-screen
+    const clampedX = Math.max(110, Math.min(window.innerWidth - 110, rawX));
+    const clampedY = Math.max(70, Math.min(window.innerHeight - 80, rawY));
 
     soundEngine.playBalloonPop();
-    popBalloonConfetti(x, y);
+    popBalloonConfetti(clampedX, clampedY);
 
     setPoppedCount((prev) => prev + 1);
 
     const wishText = SURPRISE_WISHES[Math.floor(Math.random() * SURPRISE_WISHES.length)];
     const wishId = `wish-${Date.now()}-${Math.random()}`;
-    setFloatingWishes((prev) => [...prev, { id: wishId, x, y, text: wishText }]);
+    
+    // Add new wish
+    setFloatingWishes((prev) => [...prev, { id: wishId, x: clampedX, y: clampedY, text: wishText, isFading: false }]);
 
+    // Smooth fade-out starts at 4.2 seconds
+    setTimeout(() => {
+      setFloatingWishes((prev) =>
+        prev.map((w) => (w.id === wishId ? { ...w, isFading: true } : w))
+      );
+    }, 4200);
+
+    // Completely remove after 5.0 seconds (stays long enough to read comfortably!)
     setTimeout(() => {
       setFloatingWishes((prev) => prev.filter((w) => w.id !== wishId));
-    }, 1800);
+    }, 5000);
 
-    // Remove popped balloon
+    // Remove popped balloon immediately
     setBalloons((prev) => prev.filter((b) => b.id !== id));
   };
 
-  // Launch balloons for a specific timed duration, then automatically disappear!
+  // Launch balloons for a specific timed duration, then automatically disappear
   const launchTimedBalloons = useCallback((durationMs: number) => {
-    // Clear existing timers
     if (cleanupTimeoutRef.current) clearTimeout(cleanupTimeoutRef.current);
     if (fadeTimeoutRef.current) clearTimeout(fadeTimeoutRef.current);
 
@@ -152,20 +166,19 @@ export const BalloonEffect: React.FC<BalloonEffectProps> = ({
     const palette = BALLOON_PALETTES[theme] || BALLOON_PALETTES.pink_blush;
     const newItems: BalloonItem[] = [];
 
-    // Brief banner when Ivy manually clicks Release Balloons (duration >= 5000ms)
+    // Notification toast when Ivy manually clicks Release Balloons
     if (durationMs >= 4000) {
       setReleasedBanner(true);
       setTimeout(() => setReleasedBanner(false), 2400);
     }
 
-    // Spawn balloons covering the screen width
     for (let i = 0; i < 22; i++) {
       const col = palette[i % palette.length];
       newItems.push({
         id: `rel-${Date.now()}-${i}-${Math.random()}`,
         xPercent: 3 + (i * 4.3) + (Math.random() * 3 - 1.5),
         size: 58 + Math.random() * 36,
-        speed: 4.5 + Math.random() * 2.5, // fast ascending rise within the window
+        speed: 4.8 + Math.random() * 2.2,
         swayDuration: 1.8 + Math.random() * 1.4,
         color: col.main,
         highlightColor: col.shine,
@@ -176,13 +189,13 @@ export const BalloonEffect: React.FC<BalloonEffectProps> = ({
 
     setBalloons(newItems);
 
-    // Schedule fade-out ~700ms before disappearing completely
+    // Fade out ~700ms before duration ends
     const fadeDelay = Math.max(0, durationMs - 700);
     fadeTimeoutRef.current = window.setTimeout(() => {
       setIsFadingOut(true);
     }, fadeDelay);
 
-    // Completely disappear and remove balloons after exact duration
+    // Remove balloons after duration
     cleanupTimeoutRef.current = window.setTimeout(() => {
       setBalloons([]);
       setIsFadingOut(false);
@@ -196,7 +209,6 @@ export const BalloonEffect: React.FC<BalloonEffectProps> = ({
     }
   }, [activeRelease, launchTimedBalloons]);
 
-  // Clean up timers on unmount
   useEffect(() => {
     return () => {
       if (cleanupTimeoutRef.current) clearTimeout(cleanupTimeoutRef.current);
@@ -204,119 +216,121 @@ export const BalloonEffect: React.FC<BalloonEffectProps> = ({
     };
   }, []);
 
-  // If no balloons are currently active, do not render floating layer
-  if (balloons.length === 0 && floatingWishes.length === 0) {
-    return null;
-  }
-
   return (
-    <div 
-      className={`pointer-events-none fixed inset-0 overflow-hidden transition-opacity duration-700 ${
-        isFadingOut ? 'opacity-0' : 'opacity-100'
-      }`}
-      style={{ zIndex: 45 }}
-    >
-      {/* Released Balloons Toast Notification (when manually requested) */}
-      {releasedBanner && (
-        <div className="fixed top-16 inset-x-4 max-w-xs mx-auto z-50 bg-white/95 backdrop-blur-md border-2 border-pink-300 rounded-2xl py-2 px-4 shadow-xl text-center animate-bounce flex items-center justify-center gap-2">
-          <span className="text-xl">🎈</span>
-          <span className="font-fun font-bold text-sm text-pink-700">
-            Balloons Released for Ivy!
-          </span>
-          <span className="text-xl">🎈</span>
+    <>
+      {/* 1. Floating Balloons Layer (Timed: 3s on open, 5s on release) */}
+      {balloons.length > 0 && (
+        <div 
+          className={`pointer-events-none fixed inset-0 overflow-hidden transition-opacity duration-700 ${
+            isFadingOut ? 'opacity-0' : 'opacity-100'
+          }`}
+          style={{ zIndex: 45 }}
+        >
+          {/* Released Balloons Banner */}
+          {releasedBanner && (
+            <div className="fixed top-16 inset-x-4 max-w-xs mx-auto z-50 bg-white/95 backdrop-blur-md border-2 border-pink-300 rounded-2xl py-2 px-4 shadow-xl text-center animate-bounce flex items-center justify-center gap-2">
+              <span className="text-xl">🎈</span>
+              <span className="font-fun font-bold text-sm text-pink-700">
+                Balloons Released for Ivy!
+              </span>
+              <span className="text-xl">🎈</span>
+            </div>
+          )}
+
+          {/* Individual Balloons */}
+          {balloons.map((b) => (
+            <div
+              key={b.id}
+              onClick={(e) => handlePop(b.id, e)}
+              className="pointer-events-auto absolute cursor-pointer select-none"
+              style={{
+                left: `${b.xPercent}%`,
+                width: `${b.size}px`,
+                bottom: '-70px',
+                animation: `balloon-rise ${b.speed}s linear infinite`,
+                animationDelay: `${b.delaySec}s`
+              }}
+              title="Tap to pop balloon!"
+            >
+              {/* Inner Sway */}
+              <div
+                className="transition-transform hover:scale-110 active:scale-90"
+                style={{
+                  animation: `balloon-sway ${b.swayDuration}s ease-in-out infinite alternate`
+                }}
+              >
+                <div
+                  className="relative rounded-full shadow-xl"
+                  style={{
+                    width: `${b.size}px`,
+                    height: `${b.size * 1.25}px`,
+                    background: `radial-gradient(circle at 35% 30%, ${b.highlightColor} 0%, ${b.color} 72%, #00000028 100%)`,
+                    boxShadow: `0 8px 24px -4px ${b.color}88`
+                  }}
+                >
+                  <div
+                    className="absolute top-2 left-3 rounded-full bg-white/80 blur-[0.8px]"
+                    style={{
+                      width: `${b.size * 0.28}px`,
+                      height: `${b.size * 0.44}px`,
+                      transform: 'rotate(-25deg)'
+                    }}
+                  />
+                  <div
+                    className="absolute -bottom-1.5 left-1/2 -translate-x-1/2 w-2.5 h-2 rounded-xs"
+                    style={{ backgroundColor: b.color }}
+                  />
+                  <svg
+                    className="absolute top-[98%] left-1/2 -translate-x-1/2 overflow-visible"
+                    width="24"
+                    height={b.stringLength}
+                    viewBox={`0 0 24 ${b.stringLength}`}
+                    fill="none"
+                  >
+                    <path
+                      d={`M 12 0 Q 6 ${b.stringLength * 0.33} 16 ${b.stringLength * 0.66} T 10 ${b.stringLength}`}
+                      stroke="#fda4af"
+                      strokeWidth="1.5"
+                      strokeDasharray="2 1"
+                      fill="none"
+                    />
+                  </svg>
+                </div>
+              </div>
+            </div>
+          ))}
         </div>
       )}
 
-      {/* Floating Balloons Layer */}
-      {balloons.map((b) => (
-        <div
-          key={b.id}
-          onClick={(e) => handlePop(b.id, e)}
-          className="pointer-events-auto absolute cursor-pointer select-none"
-          style={{
-            left: `${b.xPercent}%`,
-            width: `${b.size}px`,
-            bottom: '-70px',
-            animation: `balloon-rise ${b.speed}s linear infinite`,
-            animationDelay: `${b.delaySec}s`
-          }}
-          title="Tap to pop balloon!"
-        >
-          {/* Inner Sway Wrapper */}
-          <div
-            className="transition-transform hover:scale-110 active:scale-90"
-            style={{
-              animation: `balloon-sway ${b.swayDuration}s ease-in-out infinite alternate`
-            }}
-          >
-            {/* Balloon Body Oval */}
+      {/* 2. Popped Balloon Motivational Messages (Stays for a full 5.0 seconds!) */}
+      {floatingWishes.length > 0 && (
+        <div className="pointer-events-none fixed inset-0 overflow-hidden z-50">
+          {floatingWishes.map((w) => (
             <div
-              className="relative rounded-full shadow-xl"
+              key={w.id}
+              className={`fixed pointer-events-none text-white font-fun font-bold text-xs sm:text-sm px-4 py-2 rounded-2xl bg-gradient-to-r from-pink-500 via-rose-500 to-pink-500 border border-white/40 shadow-2xl shadow-pink-500/50 -translate-x-1/2 -translate-y-full transition-all duration-700 ${
+                w.isFading ? 'opacity-0 scale-95' : 'opacity-100 scale-100 animate-in fade-in zoom-in-95'
+              }`}
               style={{
-                width: `${b.size}px`,
-                height: `${b.size * 1.25}px`,
-                background: `radial-gradient(circle at 35% 30%, ${b.highlightColor} 0%, ${b.color} 72%, #00000028 100%)`,
-                boxShadow: `0 8px 24px -4px ${b.color}88`
+                left: `${w.x}px`,
+                top: `${w.y}px`
               }}
             >
-              {/* Glossy specular reflection */}
-              <div
-                className="absolute top-2 left-3 rounded-full bg-white/80 blur-[0.8px]"
-                style={{
-                  width: `${b.size * 0.28}px`,
-                  height: `${b.size * 0.44}px`,
-                  transform: 'rotate(-25deg)'
-                }}
-              />
-
-              {/* Knot */}
-              <div
-                className="absolute -bottom-1.5 left-1/2 -translate-x-1/2 w-2.5 h-2 rounded-xs"
-                style={{ backgroundColor: b.color }}
-              />
-
-              {/* Trailing wavy ribbon */}
-              <svg
-                className="absolute top-[98%] left-1/2 -translate-x-1/2 overflow-visible"
-                width="24"
-                height={b.stringLength}
-                viewBox={`0 0 24 ${b.stringLength}`}
-                fill="none"
-              >
-                <path
-                  d={`M 12 0 Q 6 ${b.stringLength * 0.33} 16 ${b.stringLength * 0.66} T 10 ${b.stringLength}`}
-                  stroke="#fda4af"
-                  strokeWidth="1.5"
-                  strokeDasharray="2 1"
-                  fill="none"
-                />
-              </svg>
+              <div className="flex items-center gap-1.5 whitespace-nowrap">
+                <span>{w.text}</span>
+              </div>
             </div>
-          </div>
+          ))}
         </div>
-      ))}
+      )}
 
-      {/* Pop Surprise Wish Tooltips */}
-      {floatingWishes.map((w) => (
-        <div
-          key={w.id}
-          className="fixed pointer-events-none z-50 text-white font-fun font-bold text-xs sm:text-sm px-3.5 py-1.5 rounded-full bg-gradient-to-r from-pink-500 to-rose-500 shadow-xl shadow-pink-500/40 animate-bounce -translate-x-1/2 -translate-y-full"
-          style={{
-            left: `${w.x}px`,
-            top: `${w.y}px`
-          }}
-        >
-          {w.text}
-        </div>
-      ))}
-
-      {/* Pop Counter Widget */}
+      {/* 3. Pop Counter Badge */}
       {poppedCount > 0 && (
         <div className="pointer-events-auto fixed bottom-4 left-4 z-50 px-3 py-1.5 bg-white/95 text-pink-700 font-fun text-xs font-semibold rounded-2xl shadow-md border border-pink-200 backdrop-blur-sm flex items-center gap-1.5 animate-in fade-in">
           <Sparkles className="w-3.5 h-3.5 text-amber-500" />
           <span>{poppedCount} balloons popped!</span>
         </div>
       )}
-    </div>
+    </>
   );
 };
